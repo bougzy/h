@@ -1,11 +1,12 @@
 const express = require('express');
-const session = require('express-session');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const path = require('path');
+const jwt = require('jsonwebtoken');
 
 const app = express();
+const JWT_SECRET = process.env.JWT_SECRET || 'CGlsHvHtd9';
 
 // MongoDB connection
 mongoose.connect('mongodb+srv://movi:movi@movi.muqtx3v.mongodb.net/movi', {
@@ -16,6 +17,7 @@ mongoose.connect('mongodb+srv://movi:movi@movi.muqtx3v.mongodb.net/movi', {
 }).catch(err => {
     console.error('MongoDB connection error:', err);
 });
+
 // User schema and model
 const userSchema = new mongoose.Schema({
     username: { type: String, required: true },
@@ -48,18 +50,6 @@ app.use(cors({
     credentials: true
 }));
 
-app.use(session({
-    secret: process.env.SESSION_SECRET || 'hot dog',
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-        maxAge: 1000 * 60 * 60 * 24 // 1 day
-    }
-}));
-
 // Serve static files from the "public" directory
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -68,20 +58,24 @@ app.get('/', (req, res) => {
 });
 
 // Middleware to protect routes
-const requireAuth = async (req, res, next) => {
-    if (!req.session.userId) {
+const requireAuth = (req, res, next) => {
+    const authHeader = req.headers['authorization'];
+    if (!authHeader) {
         return res.status(401).json({ error: 'Unauthorized' });
     }
-    try {
-        const user = await User.findById(req.session.userId);
-        if (!user) {
+
+    const token = authHeader.split(' ')[1]; // Split "Bearer <token>" to get the token
+    if (!token) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    jwt.verify(token, JWT_SECRET, (err, decoded) => {
+        if (err) {
             return res.status(401).json({ error: 'Unauthorized' });
         }
+        req.userId = decoded.userId;
         next();
-    } catch (error) {
-        console.error('Error during authentication:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
+    });
 };
 
 // Registration endpoint
@@ -104,8 +98,8 @@ app.post('/api/login', async (req, res) => {
     try {
         const user = await User.findOne({ email });
         if (user && await bcrypt.compare(password, user.password)) {
-            req.session.userId = user._id;
-            res.status(200).json({ message: 'Login successful' });
+            const token = jwt.sign({ userId: user._id }, JWT_SECRET, { expiresIn: '1d' });
+            res.status(200).json({ token });
         } else {
             res.status(401).json({ error: 'Invalid credentials' });
         }
@@ -115,31 +109,14 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
-// Logout endpoint
-app.post('/api/logout', (req, res) => {
-    req.session.destroy((err) => {
-        if (err) {
-            return res.status(500).json({ error: 'Failed to log out' });
-        }
-        res.clearCookie('connect.sid');
-        res.status(200).json({ message: 'Logged out successfully' });
-    });
-});
-
-// Check authentication endpoint
-app.get('/api/check-authentication', requireAuth, (req, res) => {
-    res.status(200).json({ authenticated: true });
-});
-
 // Deposit endpoint
 app.post('/api/deposit', requireAuth, async (req, res) => {
     const { amount } = req.body;
     try {
-        const deposit = new Deposit({ userId: req.session.userId, amount });
+        const deposit = new Deposit({ userId: req.userId, amount });
         await deposit.save();
         
-        // Fetch the latest deposit info
-        const latestDeposit = await Deposit.findOne({ userId: req.session.userId }).sort({ timestamp: -1 });
+        const latestDeposit = await Deposit.findOne({ userId: req.userId }).sort({ timestamp: -1 });
         if (latestDeposit) {
             const secondsPassed = Math.floor((Date.now() - latestDeposit.timestamp) / 1000);
             const profitEarned = latestDeposit.amount * (Math.pow(1.3, secondsPassed / (24 * 60 * 60)) - 1);
@@ -155,10 +132,9 @@ app.post('/api/deposit', requireAuth, async (req, res) => {
 });
 
 // Get deposit info endpoint
-
 app.get('/api/deposit', requireAuth, async (req, res) => {
     try {
-        const latestDeposit = await Deposit.findOne({ userId: req.session.userId }).sort({ timestamp: -1 });
+        const latestDeposit = await Deposit.findOne({ userId: req.userId }).sort({ timestamp: -1 });
         if (latestDeposit) {
             const secondsPassed = Math.floor((Date.now() - latestDeposit.timestamp) / 1000);
             const profitEarned = latestDeposit.amount * (Math.pow(1.3, secondsPassed / (24 * 60 * 60)) - 1);
@@ -176,7 +152,7 @@ app.get('/api/deposit', requireAuth, async (req, res) => {
 // Route to get user information if authenticated
 app.get('/api/user', requireAuth, async (req, res) => {
     try {
-        const user = await User.findById(req.session.userId, 'username email');
+        const user = await User.findById(req.userId, 'username email');
         if (user) {
             res.json(user);
         } else {
@@ -189,7 +165,7 @@ app.get('/api/user', requireAuth, async (req, res) => {
 });
 
 // Start the server
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 8000;
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
 });

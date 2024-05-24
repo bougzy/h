@@ -83,10 +83,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(formData),
-                    credentials: 'include' // Include credentials in fetch requests
                 });
 
                 if (response.ok) {
+                    const data = await response.json();
+                    localStorage.setItem('token', data.token); // Store JWT
                     alert('Login successful');
                     updateNavbar(true);
                     showDepositForm();
@@ -128,11 +129,14 @@ document.addEventListener('DOMContentLoaded', () => {
             const formData = { amount: e.target.amount.value };
 
             try {
+                const token = localStorage.getItem('token');
                 const response = await fetch('/api/deposit', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(formData),
-                    credentials: 'include'
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Authorization': token ? `Bearer ${token}` : '' // Send JWT
+                    },
+                    body: JSON.stringify(formData)
                 });
 
                 if (response.ok) {
@@ -153,7 +157,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const fetchDepositInfo = async () => {
         try {
-            const response = await fetch('/api/deposit', { credentials: 'include' });
+            const token = localStorage.getItem('token');
+            const response = await fetch('/api/deposit', {
+                headers: {
+                    'Authorization': token ? `Bearer ${token}` : '' // Send JWT
+                }
+            });
+
             if (response.ok) {
                 const data = await response.json();
                 document.getElementById('totalAmount').textContent = `Total Amount: $${data.amount}`;
@@ -193,7 +203,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 if (response.ok) {
                     alert('Password reset token sent to your email');
-                    showResetPasswordForm();
+                    showReset
+                    PasswordForm();
                 } else {
                     const errorData = await response.json();
                     alert(errorData.error);
@@ -243,59 +254,61 @@ document.addEventListener('DOMContentLoaded', () => {
                     alert(errorData.error);
                 }
             } catch (error) {
-                console.error('Error resetting password:', error);
+                console.error('Error during password reset:', error);
                 alert('Password reset failed');
             }
         });
     };
 
-    const logout = async () => {
-        try {
-            const response = await fetch('/api/logout', {
-                method: 'POST',
-                credentials: 'include'
-            });
+    const PasswordForm = () => {
+        contentDiv.innerHTML = `
+            <h2>Reset Password</h2>
+            <form id="resetPasswordForm">
+                <div class="mb-3">
+                    <label for="password" class="form-label">Password</label>
+                    <input type="password" class="form-control" id="password" name="password" required>
+                </div>
+                <div class="mb-3">
+                    <label for="password_confirm" class="form-label">Confirm Password</label>
+                    <input type="password" class="form-control" id="password_confirm" name="password_confirm" required>
+                </div>
+                <button type="submit" class="btn btn-primary">Reset Password</button>
+            </form>
+        `;
 
-            if (response.ok) {
-                alert('Logged out successfully');
-                updateNavbar(false);
-                showLoginForm();
-            } else {
-                const errorData = await response.json();
-                alert(errorData.error);
+        document.getElementById('resetPasswordForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = {
+                password: e.target.password.value,
+                password_confirm: e.target.password_confirm.value,
+            };
+
+            try {
+                const response = await fetch('/api/reset-password', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(formData),
+                });
+
+                if (response.ok) {
+                    alert('Password reset successful');
+                    showLoginForm();
+                } else {
+                    const errorData = await response.json();
+                    alert(errorData.error);
+                }
+            } catch (error) {
+                console.error('Error during password reset:', error);
+                alert('Password reset failed');
             }
-        } catch (error) {
-            console.error('Error during logout:', error);
-            alert('Logout failed');
-        }
-    };
-
-    const checkAuthentication = async () => {
-        try {
-            const response = await fetch('/api/check-authentication', {
-                credentials: 'include'
-            });
-
-            if (response.ok) {
-                const data = await response.json();
-                updateNavbar(true);
-                showDepositForm();
-            } else {
-                updateNavbar(false);
-                showLoginForm();
-            }
-        } catch (error) {
-            console.error('Error checking authentication:', error);
-            updateNavbar(false);
-            showLoginForm();
-        }
+        });
     };
 
     const updateNavbar = (isAuthenticated) => {
-        registerLink.style.display = isAuthenticated ? 'none' : 'inline';
-        loginLink.style.display = isAuthenticated ? 'none' : 'inline';
-        depositLink.style.display = isAuthenticated ? 'inline' : 'none';
-        logoutLink.style.display = isAuthenticated ? 'inline' : 'none';
+        registerLink.style.display = isAuthenticated ? 'none' : 'block';
+        loginLink.style.display = isAuthenticated ? 'none' : 'block';
+        depositLink.style.display = isAuthenticated ? 'block' : 'none';
+        logoutLink.style.display = isAuthenticated ? 'block' : 'none';
     };
 
     registerLink.addEventListener('click', (e) => {
@@ -315,8 +328,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
     logoutLink.addEventListener('click', (e) => {
         e.preventDefault();
-        logout();
+        localStorage.removeItem('token'); // Remove JWT
+        updateNavbar(false);
+        showLoginForm();
     });
 
-    checkAuthentication();
+    // Initial UI setup based on authentication status
+    const token = localStorage.getItem('token');
+    if (token) {
+        updateNavbar(true);
+        showDepositForm();
+    } else {
+        updateNavbar(false);
+        showLoginForm();
+    }
 });
